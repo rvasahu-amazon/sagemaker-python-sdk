@@ -178,7 +178,10 @@ def list_jumpstart_tasks(  # pylint: disable=redefined-builtin
     )
     tasks: Set[str] = set()
     for model_id, _ in _generate_jumpstart_model_versions(
-        filter=filter, region=region, sagemaker_session=sagemaker_session
+        filter=filter,
+        region=region,
+        sagemaker_session=sagemaker_session,
+        model_type=JumpStartModelType.OPEN_WEIGHTS,
     ):
         _, task, _ = extract_framework_task_model(model_id)
         tasks.add(task)
@@ -209,7 +212,10 @@ def list_jumpstart_frameworks(  # pylint: disable=redefined-builtin
     )
     frameworks: Set[str] = set()
     for model_id, _ in _generate_jumpstart_model_versions(
-        filter=filter, region=region, sagemaker_session=sagemaker_session
+        filter=filter,
+        region=region,
+        sagemaker_session=sagemaker_session,
+        model_type=JumpStartModelType.OPEN_WEIGHTS,
     ):
         framework, _, _ = extract_framework_task_model(model_id)
         frameworks.add(framework)
@@ -244,7 +250,10 @@ def list_jumpstart_scripts(  # pylint: disable=redefined-builtin
 
     scripts: Set[str] = set()
     for model_id, version in _generate_jumpstart_model_versions(
-        filter=filter, region=region, sagemaker_session=sagemaker_session
+        filter=filter,
+        region=region,
+        sagemaker_session=sagemaker_session,
+        model_type=JumpStartModelType.OPEN_WEIGHTS,
     ):
         scripts.add(JumpStartScriptScope.INFERENCE)
         model_specs = verify_model_region_and_return_specs(
@@ -320,9 +329,12 @@ def list_jumpstart_models(  # pylint: disable=redefined-builtin
         return sorted(list(model_id_version_dict.keys()))
 
     if not list_old_models:
-        model_id_version_dict = {
-            model_id: set([max(versions)]) for model_id, versions in model_id_version_dict.items()
-        }
+        for model_id, versions in model_id_version_dict.items():
+            try:
+                model_id_version_dict.update({model_id: set([max(versions)])})
+            except TypeError:
+                versions = [str(v) for v in versions]
+                model_id_version_dict.update({model_id: set([max(versions)])})
 
     model_id_version_set: Set[Tuple[str, str]] = set()
     for model_id in model_id_version_dict:
@@ -337,6 +349,7 @@ def _generate_jumpstart_model_versions(  # pylint: disable=redefined-builtin
     region: Optional[str] = None,
     list_incomplete_models: bool = False,
     sagemaker_session: Session = DEFAULT_JUMPSTART_SAGEMAKER_SESSION,
+    model_type: Optional[JumpStartModelType] = None,
 ) -> Generator:
     """Generate models for JumpStart, and optionally apply filters to result.
 
@@ -370,12 +383,22 @@ def _generate_jumpstart_model_versions(  # pylint: disable=redefined-builtin
         s3_client=sagemaker_session.s3_client,
         model_type=JumpStartModelType.OPEN_WEIGHTS,
     )
-    models_manifest_list = open_weight_manifest_list + prop_models_manifest_list
+    models_manifest_list = (
+        open_weight_manifest_list
+        if model_type == JumpStartModelType.OPEN_WEIGHTS
+        else (
+            prop_models_manifest_list
+            if model_type == JumpStartModelType.PROPRIETARY
+            else open_weight_manifest_list + prop_models_manifest_list
+        )
+    )
 
     if isinstance(filter, str):
         filter = Identity(filter)
 
-    manifest_keys = set(models_manifest_list[0].__slots__ + prop_models_manifest_list[0].__slots__)
+    manifest_keys = set(
+        open_weight_manifest_list[0].__slots__ + prop_models_manifest_list[0].__slots__
+    )
 
     all_keys: Set[str] = set()
 
@@ -416,19 +439,19 @@ def _generate_jumpstart_model_versions(  # pylint: disable=redefined-builtin
             manifest_specs_cached_values[val] = getattr(model_manifest, val)
 
         if is_task_filter:
-            manifest_specs_cached_values[
-                SpecialSupportedFilterKeys.TASK
-            ] = extract_framework_task_model(model_manifest.model_id)[1]
+            manifest_specs_cached_values[SpecialSupportedFilterKeys.TASK] = (
+                extract_framework_task_model(model_manifest.model_id)[1]
+            )
 
         if is_framework_filter:
-            manifest_specs_cached_values[
-                SpecialSupportedFilterKeys.FRAMEWORK
-            ] = extract_framework_task_model(model_manifest.model_id)[0]
+            manifest_specs_cached_values[SpecialSupportedFilterKeys.FRAMEWORK] = (
+                extract_framework_task_model(model_manifest.model_id)[0]
+            )
 
         if is_model_type_filter:
-            manifest_specs_cached_values[
-                SpecialSupportedFilterKeys.MODEL_TYPE
-            ] = extract_model_type_filter_representation(model_manifest.spec_key)
+            manifest_specs_cached_values[SpecialSupportedFilterKeys.MODEL_TYPE] = (
+                extract_model_type_filter_representation(model_manifest.spec_key)
+            )
 
         if Version(model_manifest.min_version) > Version(get_sagemaker_version()):
             return None
@@ -512,6 +535,7 @@ def get_model_url(
     model_version: str,
     region: Optional[str] = None,
     sagemaker_session: Session = DEFAULT_JUMPSTART_SAGEMAKER_SESSION,
+    config_name: Optional[str] = None,
 ) -> str:
     """Retrieve web url describing pretrained model.
 
@@ -540,5 +564,6 @@ def get_model_url(
         sagemaker_session=sagemaker_session,
         scope=JumpStartScriptScope.INFERENCE,
         model_type=model_type,
+        config_name=config_name,
     )
     return model_specs.url
